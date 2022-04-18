@@ -22,6 +22,11 @@ class RenderedTarget extends Target {
          * @type {!Sprite}
          */
         this.sprite = sprite;
+        this.customField=null
+        this.groupId=null;//如果该sprite被分组了，则存在groupId
+        this.groupName='';//该sprite所属分组的名字。支持修改
+        this.groupIndex=null;//该sprite在分组的位置 支持拖拽排序
+        this.groupOpen=null;//该sprite在分组的位置 支持拖拽排序
         /**
          * Reference to the global renderer for this VM, if one exists.
          * @type {?RenderWebGL}
@@ -462,7 +467,12 @@ class RenderedTarget extends Target {
             this.sprite.addCostumeAt(costumeObject, this.sprite.costumes.length);
         }
     }
-
+    getCustomState (stateId) {
+        return this.sprite.getCustomState(stateId);
+    }
+    setCustomState (stateId, newValue) {
+        this.sprite.setCustomState(stateId, newValue)
+    }
     /**
      * Rename a costume, taking care to avoid duplicate names.
      * @param {int} costumeIndex - the index of the costume to be renamed.
@@ -702,7 +712,9 @@ class RenderedTarget extends Target {
     getName () {
         return this.sprite.name;
     }
-
+    getGid(){
+        return this.sprite.groupId;
+    }
     /**
      * Return whether this rendered target is a sprite (not a clone, not the stage).
      * @return {boolean} True if not a clone and not the stage.
@@ -1066,6 +1078,7 @@ class RenderedTarget extends Target {
         const costumes = this.getCostumes();
         return {
             id: this.id,
+            customField:this.sprite.customField, 
             name: this.getName(),
             isStage: this.isStage,
             x: this.x,

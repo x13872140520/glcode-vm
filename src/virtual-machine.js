@@ -23,6 +23,8 @@ const newBlockIds = require('./util/new-block-ids');
 const {loadCostume} = require('./import/load-costume.js');
 const {loadSound} = require('./import/load-sound.js');
 const {serializeSounds, serializeCostumes} = require('./serialization/serialize-assets');
+const { inRange } = require('lodash');
+const { resolve } = require('path');
 require('canvas-toBlob');
 
 const RESERVED_NAMES = ['_mouse_', '_stage_', '_edge_', '_myself_', '_random_'];
@@ -996,11 +998,11 @@ class VirtualMachine extends EventEmitter {
                 const oldName = sprite.name;
                 const newUnusedName = StringUtil.unusedName(newName, names);
                 sprite.name = newUnusedName;
-                const allTargets = this.runtime.targets;
-                for (let i = 0; i < allTargets.length; i++) {
-                    const currTarget = allTargets[i];
-                    currTarget.blocks.updateAssetName(oldName, newName, 'sprite');
-                }
+                // const allTargets = this.runtime.targets;
+                // for (let i = 0; i < allTargets.length; i++) {
+                //     const currTarget = allTargets[i];
+                //       .blocks.updateAssetName(oldName, newName, 'sprite');
+                // }
 
                 if (newUnusedName !== oldName) this.emitTargetsUpdate();
             }
@@ -1008,7 +1010,81 @@ class VirtualMachine extends EventEmitter {
             throw new Error('No target with the provided id.');
         }
     }
-
+     /**
+     * Rename a groupName of sprites.
+     * @param {string} newName input value of group rename 
+     * @param {string} groupId groupId of the sprites in a same group.
+     */
+      renameGroupOfSprites (newName, groupId) {
+        let targets = this.runtime.targets;
+        targets.map((v)=>{
+            if(Object.keys(v.sprite.customField).length!==0&&v.sprite.customField.groupId===groupId){
+                v.sprite.customField.groupName=newName
+            }
+        })
+        this.runtime.targets = targets;
+        this.emitTargetsUpdate();
+    }
+    /**
+     * Rename a groupName of sprites.
+     * @param {bool} status current group is editing ?
+     * @param {string} groupId groupId of the sprites in a same group.
+     */
+     onToggleIsEditByGroupId (status, groupId) {
+        let targets = this.runtime.targets;
+        targets.map((v)=>{
+            if(Object.keys(v.sprite.customField).length!==0&&v.sprite.customField.groupId===groupId){
+                v.sprite.customField.groupIsEdit=status
+            }
+        })
+        this.runtime.targets = targets;
+        this.emitTargetsUpdate();
+    }
+    /**
+     * Rename a groupName of sprites.
+     * @param {bool} status current group is open ?
+     * @param {string} groupId groupId of the sprites in a same group.
+     */
+     onToggleIsOpenByGroupId (status, groupId) {
+        let targets = this.runtime.targets;
+        targets.map((v)=>{
+            if(Object.keys(v.sprite.customField).length!==0&&v.sprite.customField.groupId===groupId){
+                v.sprite.customField.groupOpen=status
+            }
+        })
+        this.runtime.targets = targets;
+        this.emitTargetsUpdate();
+    }
+    /**
+     * add a group for a sprite.
+     * @param {string} targetId ID of a target whose sprite to add.
+     */
+    addGroupToSprite (targetId,order) {
+    const target = this.runtime.getTargetById(targetId);
+    if (target) {
+        if (!target.isSprite()) {
+            throw new Error('Cannot create group for non-sprite targets.');
+        }
+        const sprite = target.sprite;
+        if (!sprite) {
+            throw new Error('No sprite associated with this target.');
+        }
+        if (sprite.groupIndex==null) {
+            sprite.customField={
+                groupId:targetId+'g',
+                groupName:sprite.name+'组',
+                groupIndex:order,
+                groupOpen:true,
+                spriteIndexInGroup:0,
+                groupIsEdit:false
+            }
+            this.emitTargetsUpdate();
+        }
+        else {
+        throw new Error('已经有分组了');
+        }
+    }
+    }
     /**
      * Delete a sprite and all its clones.
      * @param {string} targetId ID of a target whose sprite to delete.
@@ -1312,6 +1388,10 @@ class VirtualMachine extends EventEmitter {
      */
     emitTargetsUpdate (triggerProjectChange) {
         if (typeof triggerProjectChange === 'undefined') triggerProjectChange = true;
+        this.runtime.targets.map((v,i)=>{
+            console.log('%c'+i+'id--'+v.id+'--组名'+v.sprite.customField.groupId+'--'+v.sprite.customField.spriteIndexInGroup+'--'+v.sprite.name,'color:green')
+        })
+        //
         this.emit('targetsUpdate', {
             // [[target id, human readable target name], ...].
             targetList: this.runtime.targets
@@ -1319,7 +1399,9 @@ class VirtualMachine extends EventEmitter {
                     // Don't report clones.
                     target => !target.hasOwnProperty('isOriginal') || target.isOriginal
                 ).map(
-                    target => target.toJSON()
+                    target =>{
+                        return target.toJSON()
+                    } 
                 ),
             // Currently editing target id.
             editingTarget: this.editingTarget ? this.editingTarget.id : null
@@ -1415,8 +1497,28 @@ class VirtualMachine extends EventEmitter {
         targets.splice(newIndex, 0, target);
         this.runtime.targets = targets;
         this.emitTargetsUpdate();
+        //它的实现原理是交换renderTarget中的item的位置。
+        //我们加入分组的原理，是需要拿到鼠标所在的index，然后修改被拖拽的sprite.customField信息,也就是groupName,groupIndex等。同时，外层sprite因为被移动，外层的index序列需要对应变化
         return true;
     }
+    reorderTargetByObj(droppedObj,draggedObj){
+        let targets = this.runtime.targets;
+        let dropIndex,dragIndex;
+        targets.map((item,index)=>{
+            if(item.id===droppedObj.id){
+                dropIndex= index
+            }
+            if(item.id===draggedObj.id){
+                dragIndex= index
+            }
+        })
+        this.reorderTarget(dragIndex,dropIndex)
+        let temArr=targets[dropIndex]
+        targets[dropIndex]=targets[dragIndex]
+        targets[dragIndex]=temArr
+        this.runtime.targets = targets;
+        this.emitTargetsUpdate();
+    }  
 
     /**
      * Reorder the costumes of a target if it exists. Return whether it succeeded.
@@ -1548,6 +1650,842 @@ class VirtualMachine extends EventEmitter {
     configureScratchLinkSocketFactory (factory) {
         this.runtime.configureScratchLinkSocketFactory(factory);
     }
+    isGroupIn(currentTargetOrSprite){ //接收参数可以为target也可以为sprite//true代表当前targets是组内sprite false为组外sprite
+        if(currentTargetOrSprite.hasOwnProperty('sprite')){
+             return Object.keys(currentTargetOrSprite.sprite.customField).length!=0
+        }else{
+             return Object.keys(currentTargetOrSprite.customField).length!=0
+        }
+         
+     }
+    isSameGroup(currentTarget,objCustomFieldGroupId){//true代表drop的sprite的组id跟当前sprite的组是为同一组 false则不是
+         return currentTarget.sprite.customField.groupId===objCustomFieldGroupId
+     }
+    ifAafterB(currentTarget,tempDropSpriteIndexInGroup){//// true代表当前sprite的组内index大于drag的组内index
+         return currentTarget.sprite.customField.spriteIndexInGroup>tempDropSpriteIndexInGroup
+     }
+    isANoBeforeBInGroup(currentTarget,tempTarget){
+        return currentTarget.sprite.customField.spriteIndexInGroup>=tempTarget.sprite.customField.spriteIndexInGroup
+    }   
+    isCaptain(target){
+         if(typeof target=='object'){
+             return target.customField.spriteIndexInGroup===0
+         }else{
+             return target===0
+         }
+         
+       }
+    
+    currentAisFatherToB(currentTarget,actionTarget){
+         return currentTarget.id===actionTarget.id
+      }  
+    getFieldByTarget(currentTarget,attribute){//getField(v,'spriteIndexInGroup') getField(v,'groupId')
+         return currentTarget.sprite.customField[attribute]
+     }
+    getFieldBySprite(currentSprite,attribute){
+         return currentSprite.customField[attribute]
+     }
+    case1(droppedObj,draggedObj){//reorderTargetByObj
+        let targets = this.runtime.targets;
+        let dropIndex,dragIndex;
+        targets.map((item,index)=>{
+            if(item.id===droppedObj.id){
+                dropIndex= index
+            }
+            if(item.id===draggedObj.id){
+                dragIndex= index
+            }
+        })
+        this.reorderTarget(dragIndex,dropIndex)
+        let temArr=targets[dropIndex]
+        targets[dropIndex]=targets[dragIndex]
+        targets[dragIndex]=temArr
+        this.runtime.targets = targets;
+        this.emitTargetsUpdate();
+    }
+    case2(droppedObj, draggedObj) {//reorderMixedTarget
+      var that =this
+      
+      let targets = this.runtime.targets;
+      let tempDrag
+      let tempDropTarget
+      let temDropGroupId=this.getFieldBySprite(droppedObj,'groupId')
+      let pro = new Promise(function(resolve){
+      targets.map((v,i)=>{
+              if(v.id==draggedObj.id){
+                  tempDrag=v
+                  targets.splice(i,1)
+                 
+              }
+              if(v.id==droppedObj.id){  
+                tempDropTarget=v
+                temDropGroupId=v.sprite.customField.groupId
+                }
+                resolve()
+          })
+      })
+      //此处有Bug,没有对插入组员做处理
+      pro.then(function(){
+        return new Promise(function(resolve){  
+            try{
+                tempDrag.sprite.customField= Object.assign({}, tempDropTarget.sprite.customField)
+                tempDrag.sprite.customField.spriteIndexInGroup++
+            }catch(e){console.log(e)}
+                targets.map((v)=>{
+                //其他所有因为插入的sprite的spriteIndexInGroup需要对应+1
+                if(that.isGroupIn(v)&&that.isSameGroup(v,temDropGroupId)&&that.ifAafterB(v,that.getFieldByTarget(tempDropTarget,'spriteIndexInGroup'))){
+                    v.sprite.customField.spriteIndexInGroup++
+                }
+            })
+         
+           resolve()
+            })
+      }).then(function(){
+          targets.map((value,index)=>{
+              if(value.id==tempDropTarget.id){
+                  targets.splice(index+1,0,tempDrag)
+                  //需要修改按顺序对应重排targets
+                  that.runtime.targets = targets;
+                  that.emitTargetsUpdate();
+              }
+          })
+           //droppobj targets index
+      })
+    
+  }
+  case3(targetId, draggedObj){
+    let targets = this.runtime.targets;
+    let that =this
+    let tempDrag
+    let tempDropTarget
+    let temDropGroupId=targetId
+    let temDragGroupId=draggedObj.customField.groupId
+    let tempSpriteIndexInGroup=draggedObj.customField.spriteIndexInGroup
+    var pro =new Promise(function(resolve){
+        targets.map((v,i)=>{
+            console.log('1')
+            //1先存drag sprite tempDrag
+            if(v.id==draggedObj.id){
+                tempDrag=v
+                targets.splice(i,1)
+                resolve()
+                return 
+            }
+          
+        })
+    })
+     pro.then(function(){
+         return new Promise(function(resolve){
+            targets.map((v,i)=>{
+            //2 如果dragsprite还有其他得sprite，修改在其之后的sprite的组内Index
+            if(Object.keys(v.sprite.customField).length!=0&&v.sprite.customField.groupId===temDragGroupId&&v.sprite.customField.spriteIndexInGroup>tempSpriteIndexInGroup){
+                if(tempSpriteIndexInGroup===0&&v.sprite.customField.spriteIndexInGroup===1){ 
+            //3如果dragsprite是队长，还需要移交队长，修改其他所有sprite的groupId为新队长
+                  v.sprite.customField.groupId=v.id+'g'
+                }
+                v.sprite.customField.spriteIndexInGroup=v.sprite.customField.spriteIndexInGroup-1
+            }
+         
+            //4取得drop信息
+            if(v.sprite.customField.groupId==targetId&&v.sprite.customField.spriteIndexInGroup==0){
+                tempDropTarget=v
+                temDropGroupId=v.sprite.customField.groupId
+            }
+            })
+         
+            resolve()
+         })
+     }).then(function(){
+        // //5按drop信息修改drag组名，index+1,并且所有在其之后的组员的spriteIndexInGroup对应+1
+       return new Promise(function(resolve){
+        try{
+            tempDrag.sprite.customField= Object.assign({}, tempDropTarget.sprite.customField)
+            tempDrag.sprite.customField.spriteIndexInGroup=0
+        }catch(e){console.log(e)}
+            targets.map((v,i)=>{
+            //其他所有因为插入的sprite的spriteIndexInGroup需要对应+1
+            if(Object.keys(v.sprite.customField).length!=0&&v.sprite.customField.groupId===temDropGroupId&&v.sprite.customField.spriteIndexInGroup>=tempDropTarget.sprite.customField.spriteIndexInGroup){
+                v.sprite.customField.spriteIndexInGroup=v.sprite.customField.spriteIndexInGroup+1
+            }
+        })
+        resolve()
+       })
+     }).then(function(){
+        targets.map((v,i)=>{
+            if(v.id===tempDropTarget.id){
+                targets.splice(i+1,0,tempDrag)
+            }
+        })
+        console.log('有Bug,这里的targets生成额组内顺序不对',targets)
+        that.runtime.targets = targets;
+        that.emitTargetsUpdate();
+     })
+   
+
+    //这里的情况是不同组sprite拉动，drag sprite要加入dropsprite的对应位置。
+}
+    case4(draggedObj){
+        const targets = this.runtime.targets
+        let temArr=null
+        targets.map((v,i)=>{
+            if(draggedObj.id===v.id){
+                temArr=v
+                targets.splice(i,1)
+            }
+        })
+        targets.splice(1,0,temArr)
+        this.runtime.targets = targets;
+        this.emitTargetsUpdate();
+    }
+    case5(draggedObj){
+        const targets = this.runtime.targets
+        let temArr=null
+        targets.map((v,i)=>{
+            if(draggedObj.id===v.id){
+                temArr=v
+                targets.splice(i,1)
+            }
+        })
+        targets.push(temArr)
+        this.runtime.targets = targets;
+        this.emitTargetsUpdate();
+    }
+    case6 (droppedObj, draggedObj) {//17种case适用于case6 reorderSpriteInGroup
+        let targets = this.runtime.targets;
+         //如果droppedObj, draggedObj中有任意一个sprite被跟组长sprite交换，要修改对应所有组员的groupId为draggedObj的spriteId+'g'。
+        let captainSpriteId=draggedObj.customField.groupId.substring(0, droppedObj.customField.groupId.lastIndexOf('g'))
+        let newCaptainSpriteId;
+        if(droppedObj.id==captainSpriteId){//如果drop的是队长，draggedObj.id就是新的队长id
+            newCaptainSpriteId=draggedObj.id+'g'
+        }else if(draggedObj.id==captainSpriteId){//如果drag的是队长，droppedObj.id就是新的队长id
+            newCaptainSpriteId=droppedObj.id+'g'
+         }
+        var dropSpriteIndex=this.getFieldBySprite(droppedObj,'spriteIndexInGroup')
+        var dragSpriteIndex=this.getFieldBySprite(draggedObj,'spriteIndexInGroup')
+        let dropIndex,dragIndex;
+        targets.map((v,index)=>{
+            if(newCaptainSpriteId&&this.getFieldByTarget(v,'groupId')==captainSpriteId+'g'){//如果，drop或drag其中有队长，则产生新的队长id
+                v.sprite.customField.groupId=newCaptainSpriteId
+            }
+            if(v.id==droppedObj.id){
+                v.sprite.customField.spriteIndexInGroup=dragSpriteIndex
+                dropIndex= index
+            }
+            if(v.id==draggedObj.id){
+                v.sprite.customField.spriteIndexInGroup=dropSpriteIndex
+                dragIndex= index
+            }
+        })
+        let temArr=targets[dropIndex]
+        targets[dropIndex]=targets[dragIndex]
+        targets[dragIndex]=temArr
+        //这里不仅需要修改spriteIndexInGroup,还需要修改按顺序对应重排targets
+        this.runtime.targets = targets;
+        this.emitTargetsUpdate();
+    }
+   
+     case7(droppedObj, draggedObj){
+         let targets = this.runtime.targets;
+         let that =this
+         let tempDrag
+         let tempDropTarget
+         let temDropGroupId=this.getFieldBySprite(droppedObj,'groupId')
+         let temDragGroupId=this.getFieldBySprite(draggedObj,'groupId')
+         let tempSpriteIndexInGroup=this.getFieldBySprite(draggedObj,'spriteIndexInGroup')
+         let newCaptainSpriteId=null
+         var pro =new Promise(function(resolve){
+             targets.map((v,i)=>{
+                 //1先存drag sprite tempDrag
+                 if(that.currentAisFatherToB(v,draggedObj)){
+                     tempDrag=v
+                     targets.splice(i,1)
+                     resolve()
+                     return 
+                 }
+               
+             })
+         })
+          pro.then(function(){
+              return new Promise(function(resolve){
+                 targets.map((v)=>{
+                     //2 如果dragsprite还有其他得sprite，修改在其之后的sprite的组内Index
+                 if(that.isGroupIn(v)&&that.isSameGroup(v,temDragGroupId)&&that.ifAafterB(v,tempSpriteIndexInGroup)){
+                     if(that.isCaptain(tempSpriteIndexInGroup)&&that.getFieldByTarget(v,'spriteIndexInGroup')===1){ 
+                       //3如果dragsprite是队长，还需要移交队长，修改其他所有sprite的groupId为新队长
+                       console.log('记录队长信息应该只触发一次,temDragGroupId',temDragGroupId)
+                       console.log('current Target name',v.sprite.name)
+                       console.log('cuurent Target id',v.id)
+                       v.sprite.customField.groupId=v.id+'g'
+                      
+                       newCaptainSpriteId=v.id+'g'
+                     }
+                     if(newCaptainSpriteId){
+                         console.log('队员写新队长信息',newCaptainSpriteId)
+                        v.sprite.customField.groupId=newCaptainSpriteId
+                       }
+                     v.sprite.customField.spriteIndexInGroup--
+                 }
+                 // //4取得drop信息
+                 if(v.id==droppedObj.id){
+                     tempDropTarget=v
+                     temDropGroupId=v.sprite.customField.groupId
+                 }
+                 })
+                 resolve()
+              })
+          }).then(function(){
+             // //5按drop信息修改drag组名，index+1,并且所有在其之后的组员的spriteIndexInGroup对应+1
+            return new Promise(function(resolve){
+             try{
+                 tempDrag.sprite.customField= Object.assign({}, tempDropTarget.sprite.customField)
+                 tempDrag.sprite.customField.spriteIndexInGroup++
+             }catch(e){console.log(e)}
+                 targets.map((v)=>{
+                 //其他所有因为插入的sprite的spriteIndexInGroup需要对应+1
+                 if(that.isGroupIn(v)&&that.isSameGroup(v,temDropGroupId)&&that.ifAafterB(v,that.getFieldByTarget(tempDropTarget,'spriteIndexInGroup'))){
+                     v.sprite.customField.spriteIndexInGroup++
+                 }
+             })
+             resolve()
+            })
+            
+          }).then(function(){
+             targets.map((v,i)=>{
+                 if(v.id===tempDropTarget.id){
+                     targets.splice(i+1,0,tempDrag)
+                 }
+             })
+             that.runtime.targets = targets;
+             that.emitTargetsUpdate();
+          })
+        
+ 
+         //这里的情况是不同组sprite拉动，drag sprite要加入dropsprite的对应位置。
+     }
+    case8 (draggedObj) {//17种case适用于case6 reorderSpriteInGroup
+        let targets = this.runtime.targets;
+        let that=this
+        let oldGroupId=draggedObj.customField.groupId
+        let captainSpriteId=draggedObj.customField.groupId.substring(0, draggedObj.customField.groupId.lastIndexOf('g'))
+        let tempDrag
+        let oldCaptainIndex
+            //不是队长，先存tempDrag,找到旧队长，记录队长index,将drag的id设为队长id，之前的所有队员全部修改成新id，
+            //删除drag,在旧队长前面插入temp
+            var pro = new Promise(function(resolve,){
+                targets.map((v,i)=>{
+                    if(v.id===draggedObj.id){
+                        tempDrag=v
+                    }
+                    if(v.id===captainSpriteId){
+                        oldCaptainIndex=i
+                    }
+                    if(Object.keys(v.sprite.customField).length!==0&&v.sprite.customField.groupId===oldGroupId){
+                        v.sprite.customField.groupId=draggedObj.id+'g'
+                        v.sprite.customField.spriteIndexInGroup=v.sprite.customField.spriteIndexInGroup+1
+                    }  
+                })
+                resolve()
+            })
+            pro.then(function(){
+                targets.map((v,i)=>{
+                    if(v.id===draggedObj.id){
+                        tempDrag=v
+                        targets.splice(i,1)
+                    }
+                })
+                tempDrag.sprite.customField.spriteIndexInGroup=0  
+                targets.splice(oldCaptainIndex,0,tempDrag)
+                that.runtime.targets = targets;
+                that.emitTargetsUpdate();  
+            })
+    }
+    case9(targetId, draggedObj){
+        let targets = this.runtime.targets;
+        let that =this
+        let tempDrag
+        let tempDropTarget
+        let temDropGroupId=targetId
+        let temDragGroupId=draggedObj.customField.groupId
+        let tempSpriteIndexInGroup=draggedObj.customField.spriteIndexInGroup
+        var pro =new Promise(function(resolve){
+            targets.map((v,i)=>{
+                console.log('1')
+                //1先存drag sprite tempDrag
+                if(v.id==draggedObj.id){
+                    tempDrag=v
+                    targets.splice(i,1)
+                    resolve()
+                    return 
+                }
+              
+            })
+        })
+         pro.then(function(){
+             return new Promise(function(resolve){
+                targets.map((v,i)=>{
+                //2 如果dragsprite还有其他得sprite，修改在其之后的sprite的组内Index
+                if(Object.keys(v.sprite.customField).length!=0&&v.sprite.customField.groupId===temDragGroupId&&v.sprite.customField.spriteIndexInGroup>tempSpriteIndexInGroup){
+                    if(tempSpriteIndexInGroup===0&&v.sprite.customField.spriteIndexInGroup===1){ 
+                //3如果dragsprite是队长，还需要移交队长，修改其他所有sprite的groupId为新队长
+                      v.sprite.customField.groupId=v.id+'g'
+                    }
+                    v.sprite.customField.spriteIndexInGroup=v.sprite.customField.spriteIndexInGroup-1
+                }
+             
+                //4取得drop信息
+                if(v.sprite.customField.groupId==targetId&&v.sprite.customField.spriteIndexInGroup==0){
+                    tempDropTarget=v
+                    temDropGroupId=v.sprite.customField.groupId
+                }
+                })
+             
+                resolve()
+             })
+         }).then(function(){
+            // //5按drop信息修改drag组名，index+1,并且所有在其之后的组员的spriteIndexInGroup对应+1
+           return new Promise(function(resolve){
+            try{
+                tempDrag.sprite.customField= Object.assign({}, tempDropTarget.sprite.customField)
+                tempDrag.sprite.customField.spriteIndexInGroup=0
+            }catch(e){console.log(e)}
+                targets.map((v,i)=>{
+                //其他所有因为插入的sprite的spriteIndexInGroup需要对应+1
+                if(Object.keys(v.sprite.customField).length!=0&&v.sprite.customField.groupId===temDropGroupId&&v.sprite.customField.spriteIndexInGroup>=tempDropTarget.sprite.customField.spriteIndexInGroup){
+                    v.sprite.customField.spriteIndexInGroup=v.sprite.customField.spriteIndexInGroup+1
+                }
+            })
+            resolve()
+           })
+         }).then(function(){
+            targets.map((v,i)=>{
+                if(v.id===tempDropTarget.id){
+                    targets.splice(i+1,0,tempDrag)
+                }
+            })
+            that.runtime.targets = targets;
+            that.emitTargetsUpdate();
+         })
+       
+
+        //这里的情况是不同组sprite拉动，drag sprite要加入dropsprite的对应位置。
+    }
+    case10(droppedObj, draggedObj){
+        let targets = this.runtime.targets; 
+        let that = this
+        let oldCaptainSpriteId = draggedObj.customField.groupId
+        let isGetNewCap=false
+        let newCaptainSpriteId
+        let dragTarget
+        let pro = new Promise(function(resolve){
+            targets.map((v,i)=>{
+                if(v.id===draggedObj.id){
+                    dragTarget=v
+                    dragTarget.sprite.customField={}
+                    targets.splice(i,1)
+                    resolve()
+                }
+            }) 
+        })
+        pro.then(function(){
+            return new Promise(function (resolve) {
+                targets.map((v,i)=>{
+                    if(v.id===droppedObj.id){
+                        targets.splice(i+1,0,dragTarget)
+                        resolve()
+                    }
+                }) 
+            });
+        }).then(function(){
+            targets.map((v,i)=>{
+                if(Object.keys(v.sprite.customField).length!==0&&v.sprite.customField.groupId===oldCaptainSpriteId){
+                    if(!isGetNewCap){
+                        newCaptainSpriteId=v.id+'g'
+                        isGetNewCap=true
+                    }
+                    v.sprite.customField.groupId=newCaptainSpriteId
+                }
+            })
+            that.runtime.targets = targets;
+            that.emitTargetsUpdate();  
+        })
+    }
+    case11(draggedObj){//类似case5但是需要清除分组信息
+        const targets = this.runtime.targets
+        let temArr=null
+        let that = this
+        let newCaptainSpriteId
+        let temDragGroupId=this.getFieldBySprite(draggedObj,'groupId')
+        let tempSpriteIndexInGroup=this.getFieldBySprite(draggedObj,'spriteIndexInGroup')
+        var pro=new Promise(function(resolve,reject){
+            targets.map((v,i)=>{
+                if(draggedObj.id===v.id){
+                    temArr=v
+                    temArr.sprite.customField={}
+                    targets.splice(i,1)
+                }
+            })
+            resolve()
+        })
+        //原来的分组信息需要对应修改
+        pro.then(function(){
+            return new Promise(function(resolve){  
+               targets.map((v)=>{
+                   //2 如果dragsprite还有其他得sprite，修改在其之后的sprite的组内Index
+               if(that.isGroupIn(v)&&that.isSameGroup(v,temDragGroupId)&&that.ifAafterB(v,tempSpriteIndexInGroup)){
+                   if(that.isCaptain(tempSpriteIndexInGroup)&&that.getFieldByTarget(v,'spriteIndexInGroup')==1){ 
+                      
+                     //3如果dragsprite是队长，还需要移交队长，修改其他所有sprite的groupId为新队长
+                     v.sprite.customField.groupId=v.id+'g'
+                     newCaptainSpriteId=v.id+'g'
+                   }
+                   if(newCaptainSpriteId){
+                    v.sprite.customField.groupId=newCaptainSpriteId
+                   }
+                   
+                   v.sprite.customField.spriteIndexInGroup--
+               }
+            
+               })
+               resolve()
+            })
+        }).then(function(){
+            targets.splice(1,0,temArr)
+            that.runtime.targets = targets;
+            that.emitTargetsUpdate();
+        })
+    }
+    case12(draggedObj){//类似case5但是需要清除分组信息
+        const targets = this.runtime.targets
+        let temArr=null
+        let that = this
+        let newCaptainSpriteId=null
+        let temDragGroupId=this.getFieldBySprite(draggedObj,'groupId')
+        let tempSpriteIndexInGroup=this.getFieldBySprite(draggedObj,'spriteIndexInGroup')
+        var pro=new Promise(function(resolve,reject){
+            targets.map((v,i)=>{
+                if(draggedObj.id===v.id){
+                    temArr=v
+                    temArr.sprite.customField={}
+                    targets.splice(i,1)
+                }
+            })
+            resolve()
+        })
+        //原来的分组信息需要对应修改
+        pro.then(function(){
+            return new Promise(function(resolve){  
+              
+               targets.map((v)=>{
+                   //2 如果dragsprite还有其他得sprite，修改在其之后的sprite的组内Index
+               if(that.isGroupIn(v)&&that.isSameGroup(v,temDragGroupId)&&that.ifAafterB(v,tempSpriteIndexInGroup)){
+                   if(that.isCaptain(tempSpriteIndexInGroup)&&that.getFieldByTarget(v,'spriteIndexInGroup')==1){ 
+                    console.log('记录队长信息应该只触发一次,temDragGroupId',temDragGroupId)
+                    console.log('current Target name',v.sprite.name)
+                    console.log('cuurent Target id',v.id)
+                     //3如果dragsprite是队长，还需要移交队长，修改其他所有sprite的groupId为新队长
+                     v.sprite.customField.groupId=v.id+'g'
+                     newCaptainSpriteId=v.id+'g'
+                   }
+                   if(newCaptainSpriteId){
+                    console.log('队员写新队长信息',newCaptainSpriteId)
+                    v.sprite.customField.groupId=newCaptainSpriteId
+                   }
+                   
+                   v.sprite.customField.spriteIndexInGroup--
+               }
+            
+               })
+               resolve()
+            })
+        }).then(function(){
+            targets.push(temArr)
+            that.runtime.targets = targets;
+            that.emitTargetsUpdate();
+        })
+    }
+    case13(droppedObj,draggedObj){//case13 draggedObj是组 drop是sprite
+        try{
+            console.log('case13')
+        let that =this
+        let targets=copyTargets = this.runtime.targets;
+        let dropIndexs=[]//被drop的组的所有sprice的target的所在index
+        let dragIndexs=[]//抓起的组的所有sprice的target的所在index
+        let dropTargets=[]//被drop的组的所有sprice的target
+        let dragTargets=[]//抓起的对象的所有sprice的target
+        let dragGroupId=Object.keys(draggedObj.customField).length!=0?draggedObj.customField.groupId:null//draggedObj如果没有分组的话dragGroupId就是Null
+        let num 
+        let shorterTailIndex
+        let swopTimes//一共要交换的次数
+        let whoIsLonger
+        let insertIndexPlaceholder
+        let pro = new Promise(function(resolve){
+            targets.map((v,i)=>{
+                if(v.id==droppedObj.id){
+                    dropIndexs.push(i)
+                    dropTargets.push(v)
+                }
+                if(that.isGroupIn(v)&&dragGroupId&&that.isSameGroup(v,dragGroupId)){//draggedObj.customField.groupId有可能不是组
+                    dragIndexs.push(i)
+                    dragTargets.push(v)
+                }
+                if(v.id==draggedObj.id&&dragGroupId==null){
+                    dragIndexs.push(i)
+                    dragTargets.push(v)
+                }
+            })
+            if(dragTargets.length>0&&
+                dropTargets.length>0&&
+                dragIndexs.length>0&&
+                dropIndexs.length>0){
+                    console.log('dragTargets完成')
+                    console.log(dragTargets)
+                    console.log(dropTargets)
+                    console.log(dragIndexs)
+                    console.log(dropIndexs)
+                    resolve()
+                }
+            
+        })
+        pro.then(function(){
+            return new Promise(function(resolve){
+                swopTimes= dropTargets.length
+                console.log('swopTimes',swopTimes)
+            if(dropTargets.length>dragTargets.length){
+                 num =dropTargets.length - dragTargets.length
+                 shorterTailIndex= dragIndexs[dragTargets.length-1]
+                 swopTimes =dropTargets.length
+                 whoIsLonger='dropIsLonger'
+                
+            }else if(dragTargets.length>dropTargets.length){
+                 num =dragTargets.length - dropTargets.length
+                 shorterTailIndex= dropIndexs[dropTargets.length-1]
+                 swopTimes =dragTargets.length
+                 whoIsLonger='dragIsLonger'
+            }
+            for(var i=0;i<num;i++){
+                if(whoIsLonger==='dropIsLonger'){
+                    dragIndexs.push(shorterTailIndex+i+1)
+                    insertIndexPlaceholder=shorterTailIndex+i+1
+                }else if(whoIsLonger==='dragIsLonger'){
+                    dropIndexs.push(shorterTailIndex+i+1)
+                    insertIndexPlaceholder=shorterTailIndex+i+1
+                }
+               
+                targets.splice(shorterTailIndex+1,0,'placeHolder')
+             
+            }
+            console.log('finishplaceholder',targets)
+            resolve()
+            })
+        }).then(function(){
+            return new Promise(function(resolve,reject){
+                console.log('插完Placeholder的targets',targets)
+                console.log('改造前的dropIndexs,dragIndexs',JSON.stringify(dropIndexs),JSON.stringify(dragIndexs))
+                //这里再来算一遍临时的Index
+                // var dropIndex=
+                // targets.map
+                if(dropIndexs[0]>=insertIndexPlaceholder){ //用于解决组分离bug，原因是插入placeHolder引起dropIndex变化导致查找的组sprite不准确
+                    dropIndexs.map((v,i)=>{
+                        dropIndexs[i]=v+num//如果drop 的组是drap后面，dropIndexs组的成员++
+                        console.log('dropIndexs防止Bug修改为',v,num)
+                    })
+                    
+                   
+                }else if(dragIndexs[0]>=insertIndexPlaceholder){
+                    dragIndexs.map((v,i)=>{
+                        dragIndexs[i]=v+num//如果drop 的组是drap后面，dropIndexs组的成员++
+                        console.log('dragIndexs防止Bug修改为',dropIndexs)
+                    })
+                  
+                }
+              
+               resolve()
+            })
+           
+        }).then(function(){
+            console.log('改造后的dropIndexs,dragIndexs',JSON.stringify(dropIndexs),JSON.stringify(dragIndexs))
+            console.log('改造后的dropTargets,dragTargets',dropTargets,dragTargets)
+            for(var j=0;j<swopTimes;j++){
+                let temArr=targets[dropIndexs[j]]
+                targets[dropIndexs[j]]=targets[dragIndexs[j]]
+                targets[dragIndexs[j]]=temArr
+    
+            }
+            //最后删除所有'placeHolder'项
+            function checkTargets(target) {
+                return target!='placeHolder';
+            }
+            
+            targets=targets.filter(checkTargets)
+            that.runtime.targets = targets;
+            that.emitTargetsUpdate();
+        })
+        }catch(e){console.log(e)}
+        
+    }
+    case15(dropGroupId,draggedObj){//case15
+        //原则上尽量一个case一个函数(单一职责)，不然容易产生回归Bug.
+        //draggedObj是一个组得sprite，需要在targetsList中将dropsprite和drag的组的第一个sprite对调位置
+        try{
+            let that =this
+        let targets=copyTargets = this.runtime.targets;
+        let dropIndexs=[]//被drop的组的所有sprice的target的所在index
+        let dragIndexs=[]//抓起的组的所有sprice的target的所在index
+        let dropTargets=[]//被drop的组的所有sprice的target
+        let dragTargets=[]//抓起的对象的所有sprice的target
+        let dragGroupId=Object.keys(draggedObj.customField).length!=0?draggedObj.customField.groupId:null//draggedObj如果没有分组的话dragGroupId就是Null
+        let num 
+        let shorterTailIndex
+        let swopTimes//一共要交换的次数
+        let whoIsLonger
+        let insertIndexPlaceholder
+        let pro = new Promise(function(resolve){
+            targets.map((v,i)=>{
+                if(that.isGroupIn(v)&&that.isSameGroup(v,dropGroupId)){
+                    dropIndexs.push(i)
+                    dropTargets.push(v)
+    
+                }
+                if(that.isGroupIn(v)&&dragGroupId&&that.isSameGroup(v,dragGroupId)){//draggedObj.customField.groupId有可能不是组
+                    dragIndexs.push(i)
+                    dragTargets.push(v)
+                }
+                if(v.id==draggedObj.id&&dragGroupId==null){
+                    dragIndexs.push(i)
+                    dragTargets.push(v)
+                }
+            })
+            if(dragTargets.length>0&&
+                dropTargets.length>0&&
+                dragIndexs.length>0&&
+                dropIndexs.length>0){
+                    resolve()
+                }
+            
+        })
+        pro.then(function(){
+            return new Promise(function(resolve,reject){
+                swopTimes= dropTargets.length
+            if(dropTargets.length>dragTargets.length){
+                 num =dropTargets.length - dragTargets.length
+                 shorterTailIndex= dragIndexs[dragTargets.length-1]
+                 swopTimes =dropTargets.length
+                 whoIsLonger='dropIsLonger'
+                
+            }else if(dragTargets.length>dropTargets.length){
+                 num =dragTargets.length - dropTargets.length
+                 shorterTailIndex= dropIndexs[dropTargets.length-1]
+                 swopTimes =dragTargets.length
+                 whoIsLonger='dragIsLonger'
+            }
+            for(var i=0;i<num;i++){
+                if(whoIsLonger==='dropIsLonger'){
+                    dragIndexs.push(shorterTailIndex+i+1)
+                    insertIndexPlaceholder=shorterTailIndex+i+1
+                }else if(whoIsLonger==='dragIsLonger'){
+                    dropIndexs.push(shorterTailIndex+i+1)
+                    insertIndexPlaceholder=shorterTailIndex+i+1
+                }
+               
+                targets.splice(shorterTailIndex+1,0,'placeHolder')
+              
+            }
+            resolve()
+            })
+        }).then(function(){
+            return new Promise(function(resolve,reject){
+                console.log('改造前的dropIndexs,dragIndexs',JSON.stringify(dropIndexs),JSON.stringify(dragIndexs))
+                if(dropIndexs[0]>=insertIndexPlaceholder){ //用于解决组分离bug，原因是插入placeHolder引起dropIndex变化导致查找的组sprite不准确
+                    dropIndexs.map((v,i)=>{
+                        dropIndexs[i]=v+num//如果drop 的组是drap后面，dropIndexs组的成员++
+                    })
+                    
+                   
+                }else if(dragIndexs[0]>=insertIndexPlaceholder){
+                    dragIndexs.map((v,i)=>{
+                        dragIndexs[i]=v+num//如果drop 的组是drap后面，dropIndexs组的成员++
+                    })
+                }
+                resolve()
+            })
+           
+        }).then(function(){
+            for(var j=0;j<swopTimes;j++){
+                let temArr=targets[dropIndexs[j]]
+                targets[dropIndexs[j]]=targets[dragIndexs[j]]
+                targets[dragIndexs[j]]=temArr
+    
+            }
+            //最后删除所有'placeHolder'项
+            function checkTargets(target) {
+                return target!='placeHolder';
+            }
+            
+            targets=targets.filter(checkTargets)
+            that.runtime.targets = targets;
+            that.emitTargetsUpdate();
+        })
+        }catch(e){console.log(e)}
+        
+    }
+    case16(draggedObj){//将drag组变成列表第一个
+        //找出所有drag组成员保存，然后全部删除，最后在开头插入splice
+        const targets = this.runtime.targets
+        const groupId = draggedObj.customField.groupId
+        const groupMembers=[]
+        let that =this
+        let pro = new Promise(function(resolve,reject){
+            targets.map((v,i)=>{
+                if(Object.keys(v.sprite.customField).length!==0&&v.sprite.customField.groupId===groupId){
+                    groupMembers.push(v)
+                    targets.splice(i,1)
+                    
+                }
+            })
+            resolve()
+        })
+        pro.then(function(){
+            for(var i=groupMembers.length-1;i>=0;i--){
+                targets.splice(1,0,groupMembers[i])
+            }
+          
+            that.runtime.targets = targets;
+            that.emitTargetsUpdate();
+        })
+    }
+    case17(draggedObj){//将drag组变成列表最后一个
+        //找出所有drag组成员保存，然后全部删除，最后在开头插入splice
+        let targets = this.runtime.targets
+
+       
+        let groupId = draggedObj.customField.groupId
+        let groupMembers=[]
+        let delIndex=[]
+        let that =this   
+        let pro = new Promise(function(resolve,reject){
+            targets.map((v,i)=>{
+                if(Object.keys(v.sprite.customField).length!==0&&v.sprite.customField.groupId===groupId){
+                    groupMembers.push(v)
+                    delIndex.push(i)
+                }
+            })
+            resolve()
+        })
+        pro.then(function(){
+            return new Promise(function(resolve){
+               targets = targets.filter(v => v.sprite.customField.groupId!==groupId)
+               resolve()
+           })
+        }).then(function(){
+           targets.splice(targets.length,0,...groupMembers)
+            that.runtime.targets = targets;
+            that.emitTargetsUpdate();
+        })
+   }//将drag组变成列表最后一个
+    checkTargets(target) {
+        return target!='placeHolder';
+    }
+
 }
 
 module.exports = VirtualMachine;

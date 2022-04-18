@@ -27,6 +27,7 @@ class Sprite {
          * @type {string}
          */
         this.name = '';
+        this.customField={}//用于用户自定义
         /**
          * List of costumes for this sprite.
          * Each entry is an object, e.g.,
@@ -43,6 +44,7 @@ class Sprite {
         /**
          * List of sounds for this sprite.
         */
+        this.customState = {};
         this.sounds = [];
         /**
          * List of clones for this sprite, including the original.
@@ -76,7 +78,25 @@ class Sprite {
     get costumes () {
         return this.costumes_;
     }
+ /**
+     * Retrieve custom state associated with this target and the provided state ID.
+     * @param {string} stateId - specify which piece of state to retrieve.
+     * @returns {*} the associated state, if any was found.
+     */
+  getCustomState (stateId) {
+    return this.customState[stateId];
+}
 
+/**
+ * Store custom state associated with this target and the provided state ID.
+ * @param {string} stateId - specify which piece of state to store on this target.
+ * @param {*} newValue - the state value to store.
+ */
+    setCustomState (stateId, newValue) {
+        console.log('调用了setCustomState')
+        this.customState[stateId] = newValue;
+        console.log(this.customState)
+    }
     /**
      * Add a costume at the given index, taking care to avoid duplicate names.
      * @param {!object} costumeObject Object representing the costume.
